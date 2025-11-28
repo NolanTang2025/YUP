@@ -201,11 +201,66 @@ class UserIntentAnalyzer:
         
         # 添加聚类标签
         self.features_df['cluster'] = self.cluster_labels
-        self.features_df['cluster_label'] = self.features_df['cluster'].apply(
-            lambda x: f'Cluster {x+1}'
+        
+        # 生成有意义的聚类名称（仅基于可观察的行为特征）
+        self.features_df['cluster_label'] = self.features_df.apply(
+            lambda row: self._generate_cluster_name(row['cluster']), axis=1
         )
         
         return self.cluster_labels
+    
+    def _generate_cluster_name(self, cluster_id):
+        """根据聚类特征生成有意义的名称（仅基于可观察的行为特征）"""
+        cluster_data = self.features_df[self.features_df['cluster'] == cluster_id]
+        
+        if len(cluster_data) == 0:
+            return f'聚类 {cluster_id+1}'
+        
+        # 计算聚类特征（仅使用可观察的行为指标）
+        avg_events = cluster_data['total_events'].mean()
+        avg_duration = cluster_data['session_duration_minutes'].mean()
+        exploration_score = cluster_data['exploration_score'].mean()
+        execution_score = cluster_data['execution_score'].mean()
+        event_density = cluster_data['event_density'].mean()
+        repetitive_score = cluster_data['repetitive_behavior_score'].mean()
+        payment_attempts = cluster_data['payment_attempts_count'].mean()
+        unique_events = cluster_data['unique_event_types'].mean()
+        
+        # 生成名称组件（仅基于可观察特征）
+        name_parts = []
+        
+        # 1. 紧迫程度（基于事件密度）
+        if event_density > 4.0:
+            urgency = "高紧迫"
+        elif event_density > 0.5:
+            urgency = "中紧迫"
+        else:
+            urgency = "低紧迫"
+        name_parts.append(urgency)
+        
+        # 2. 行为导向（基于实际行为模式）
+        # 如果事件数多且支付尝试多，可能是任务/活动导向
+        if avg_events > 60 and payment_attempts > 8:
+            orientation = "任务/活动导向"
+        # 如果执行得分明显高于探索得分，是交易导向
+        elif execution_score > exploration_score * 1.3:
+            orientation = "交易导向"
+        # 如果探索得分明显高于执行得分，是探索导向
+        elif exploration_score > execution_score * 1.3:
+            orientation = "探索导向"
+        # 如果重复行为得分高，是犹豫型
+        elif repetitive_score > 0.7:
+            orientation = "犹豫型"
+        # 如果事件数多，可能是任务/活动导向
+        elif avg_events > 100:
+            orientation = "任务/活动导向"
+        else:
+            orientation = "浏览导向"
+        name_parts.append(orientation)
+        
+        # 组合名称
+        cluster_name = "·".join(name_parts)
+        return cluster_name
     
     def generate_visualizations(self):
         """生成可视化HTML报告"""
@@ -263,12 +318,13 @@ class UserIntentAnalyzer:
         for cluster_id in self.features_df['cluster'].unique():
             mask = self.features_df['cluster'] == cluster_id
             cluster_users = [f"用户{i+1}" for i, m in enumerate(mask) if m]
+            cluster_name = self.features_df[self.features_df['cluster'] == cluster_id]['cluster_label'].iloc[0]
             fig.add_trace(
                 go.Scatter(
                     x=pca_result[mask, 0],
                     y=pca_result[mask, 1],
                     mode='markers+text',
-                    name=f'聚类 {cluster_id+1}',
+                    name=cluster_name,
                     text=cluster_users,
                     textposition="top center",
                     textfont=dict(color='#0a2540', size=12, family='Arial'),
@@ -352,7 +408,8 @@ class UserIntentAnalyzer:
         for user_id in self.df['user_uuid'].unique():
             user_data = self.df[self.df['user_uuid'] == user_id]
             cluster_id = self.features_df[self.features_df['user_uuid'] == user_id]['cluster'].iloc[0]
-            key = f"Cluster {cluster_id+1}"
+            cluster_name = self.features_df[self.features_df['cluster'] == cluster_id]['cluster_label'].iloc[0]
+            key = cluster_name
             if key not in event_type_counts:
                 event_type_counts[key] = Counter()
             
@@ -372,13 +429,21 @@ class UserIntentAnalyzer:
                     event_type_counts[key]['Other'] += 1
         
         for cluster_key, counts in event_type_counts.items():
-            cluster_num = int(cluster_key.split()[-1]) - 1
+            # 找到对应的cluster_id
+            cluster_id = None
+            for cid in self.features_df['cluster'].unique():
+                cluster_name = self.features_df[self.features_df['cluster'] == cid]['cluster_label'].iloc[0]
+                if cluster_name == cluster_key:
+                    cluster_id = cid
+                    break
+            if cluster_id is None:
+                cluster_id = 0
             fig.add_trace(
                 go.Bar(
                     name=cluster_key,
                     x=list(counts.keys()),
                     y=list(counts.values()),
-                    marker_color=colors[cluster_num],
+                    marker_color=colors[cluster_id],
                     marker_line_color='#0a2540',
                     marker_line_width=1,
                     showlegend=True
@@ -934,7 +999,7 @@ class UserIntentAnalyzer:
                     <p>
                         本报告基于YUP信用卡用户在获得额度后的首次交易行为数据，采用机器学习聚类算法对用户意图进行深度分析。
                         通过提取{len(self.features_df)}个用户的{len(self.df)}条行为事件数据，我们识别出{len(self.features_df['cluster'].unique())}种不同的用户意图类型。
-                        分析结果显示，{self.features_df['completed_transaction'].sum()}%的用户成功完成了首笔交易，而{len(self.features_df) - self.features_df['completed_transaction'].sum()}%的用户在多次页面交互后未能完成交易。
+                        分析结果显示，{self.features_df['completed_transaction'].sum()}%的用户有首次交易记录，而{len(self.features_df) - self.features_df['completed_transaction'].sum()}%的用户在多次页面交互后无首次交易记录。
                         本报告旨在为产品优化、用户体验提升和转化率改善提供数据驱动的决策支持。
                     </p>
                 </div>
@@ -957,7 +1022,7 @@ class UserIntentAnalyzer:
                     <div class="card">
                         <h3>完成交易用户</h3>
                         <div class="value">{self.features_df['completed_transaction'].sum()}</div>
-                        <div class="label">成功完成首笔交易</div>
+                        <div class="label">有首次交易记录</div>
                     </div>
                     <div class="card">
                         <h3>聚类数量</h3>
@@ -977,11 +1042,12 @@ class UserIntentAnalyzer:
             user_id = row['user_uuid']
             user_data = self.df[self.df['user_uuid'] == user_id]
             cluster_id = row['cluster']
-            completed = "✅ 已完成" if row['completed_transaction'] else "❌ 未完成"
+            cluster_name = row['cluster_label']
+            completed = "✅ 有交易记录" if row['completed_transaction'] else "❌ 无交易记录"
             
             html_content += f"""
                 <div class="user-profile">
-                    <h3>用户 {idx+1} - Cluster {cluster_id+1} - {completed}</h3>
+                    <h3>用户 {idx+1} - {cluster_name} - {completed}</h3>
                     <div class="profile-grid">
                         <div class="profile-item">
                             <div class="label">用户ID</div>
@@ -1049,7 +1115,8 @@ class UserIntentAnalyzer:
         
         for cluster_id in sorted(self.features_df['cluster'].unique()):
             cluster_data = self.features_df[self.features_df['cluster'] == cluster_id]
-            html_content += f"<th>Cluster {cluster_id+1} (n={len(cluster_data)})</th>"
+            cluster_name = cluster_data['cluster_label'].iloc[0]
+            html_content += f"<th>{cluster_name} (n={len(cluster_data)})</th>"
         
         html_content += """
                             </tr>
@@ -1097,18 +1164,19 @@ class UserIntentAnalyzer:
         # 生成洞察
         for cluster_id in sorted(self.features_df['cluster'].unique()):
             cluster_data = self.features_df[self.features_df['cluster'] == cluster_id]
+            cluster_name = cluster_data['cluster_label'].iloc[0]
             completed_rate = cluster_data['completed_transaction'].mean() * 100
             
             if completed_rate > 50:
                 intent = "高转化意图"
-                description = "用户表现出强烈的交易意图，最终成功完成首笔交易"
+                description = "用户表现出较强的交易意图，有首次交易记录"
             else:
                 intent = "探索型意图"
-                description = "用户处于探索阶段，浏览多个功能但未完成交易"
+                description = "用户处于探索阶段，浏览多个功能但无首次交易记录"
             
             html_content += f"""
                         <li>
-                            <strong>Cluster {cluster_id+1}: {intent}</strong><br>
+                            <strong>{cluster_name}: {intent}</strong><br>
                             {description}<br>
                             <small>转化率: {completed_rate:.1f}% | 平均事件数: {cluster_data['total_events'].mean():.1f} | 
                             平均会话时长: {cluster_data['session_duration_minutes'].mean():.1f}分钟</small>
