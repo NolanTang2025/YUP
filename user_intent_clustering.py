@@ -1,6 +1,6 @@
 """
-YUP信用卡用户意图聚类分析
-场景：客户获得额度后的第一次交易行为分析
+YUP Credit Card User Intent Clustering Analysis
+Scenario: Analysis of first transaction behavior after customers receive credit limits
 """
 
 import pandas as pd
@@ -11,7 +11,7 @@ from collections import Counter
 import warnings
 warnings.filterwarnings('ignore')
 
-# 机器学习相关
+# Machine Learning
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.decomposition import PCA
@@ -19,7 +19,7 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score
 import scipy.cluster.hierarchy as sch
 
-# 可视化相关
+# Visualization
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib import font_manager
@@ -28,19 +28,19 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.offline as pyo
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
+# Set font configuration
+plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Helvetica']
 plt.rcParams['axes.unicode_minus'] = False
 
 class UserIntentAnalyzer:
     def __init__(self, data_path):
-        """初始化分析器"""
+        """Initialize analyzer"""
         self.df = pd.read_excel(data_path)
         self.df['event_time'] = pd.to_datetime(self.df['event_time'])
         self.df['act_time'] = pd.to_datetime(self.df['act_time'])
         self.df['fir_trx_time'] = pd.to_datetime(self.df['fir_trx_time'], errors='coerce')
         
-        # 过滤掉user_uuid为NaN的行
+        # Filter out rows where user_uuid is NaN
         self.df = self.df[self.df['user_uuid'].notna()].copy()
         
         self.features_df = None
@@ -48,21 +48,21 @@ class UserIntentAnalyzer:
         self.cluster_labels = None
         
     def extract_features(self):
-        """提取用户行为特征"""
+        """Extract user behavior features"""
         features_list = []
         
         for user_id in self.df['user_uuid'].unique():
             user_data = self.df[self.df['user_uuid'] == user_id].copy()
             user_data = user_data.sort_values('event_time')
             
-            # 基础特征
+            # Basic features
             features = {
                 'user_uuid': user_id,
                 'total_events': len(user_data),
                 'completed_transaction': 1 if pd.notna(user_data['fir_trx_time'].iloc[0]) else 0,
             }
             
-            # 时间特征
+            # Time features
             if len(user_data) > 1:
                 time_diffs = user_data['event_time'].diff().dropna()
                 features.update({
@@ -79,18 +79,18 @@ class UserIntentAnalyzer:
                     'max_time_between_events': 0,
                 })
             
-            # 事件类型特征
+            # Event type features
             event_counts = user_data['event_name'].value_counts()
             event_types = user_data['event_name'].unique()
             
-            # 事件类型统计
+            # Event type statistics
             features.update({
                 'unique_event_types': len(event_types),
                 'most_common_event_count': event_counts.max() if len(event_counts) > 0 else 0,
                 'event_diversity': len(event_types) / len(user_data) if len(user_data) > 0 else 0,
             })
             
-            # 特定事件类型计数
+            # Specific event type counts
             key_events = {
                 'homepage_views': ['show_home_page', 'show_homepage'],
                 'voucher_interactions': ['voucher', '券'],
@@ -106,26 +106,26 @@ class UserIntentAnalyzer:
                 features[f'{feature_name}_count'] = count
                 features[f'{feature_name}_ratio'] = count / len(user_data) if len(user_data) > 0 else 0
             
-            # 行为序列特征
+            # Behavior sequence features
             event_sequence = user_data['event_name'].tolist()
             
-            # 计算重复行为（可能表示犹豫或探索）
+            # Calculate repetitive behavior (may indicate hesitation or exploration)
             features['repetitive_behavior_score'] = self._calculate_repetition_score(event_sequence)
             
-            # 计算行为转换次数
+            # Calculate behavior transition count
             features['behavior_transitions'] = len([i for i in range(1, len(event_sequence)) 
                                                    if event_sequence[i] != event_sequence[i-1]])
             
-            # 计算回到主页的次数（可能表示迷失）
+            # Calculate homepage return count (may indicate confusion)
             features['homepage_returns'] = sum(1 for i, event in enumerate(event_sequence) 
                                                if 'home_page' in event.lower() and i > 0)
             
-            # 备注信息特征
+            # Remarks information features
             remarks = user_data['remarks'].dropna()
             if len(remarks) > 0:
                 features['has_remarks'] = 1
                 features['remarks_count'] = len(remarks)
-                # 关键备注
+                # Key remarks
                 features['voucher_click_remarks'] = remarks.str.contains('券', na=False).sum()
                 features['qr_remarks'] = remarks.str.contains('QR', na=False).sum()
             else:
@@ -134,13 +134,13 @@ class UserIntentAnalyzer:
                 features['voucher_click_remarks'] = 0
                 features['qr_remarks'] = 0
             
-            # 意图强度特征（基于事件密度）
+            # Intent strength features (based on event density)
             if features['session_duration_minutes'] > 0:
                 features['event_density'] = features['total_events'] / features['session_duration_minutes']
             else:
                 features['event_density'] = 0
             
-            # 探索vs执行特征
+            # Exploration vs execution features
             features['exploration_score'] = features['unique_event_types'] / max(features['total_events'], 1)
             features['execution_score'] = features['payment_attempts_count'] / max(features['total_events'], 1)
             
@@ -150,36 +150,36 @@ class UserIntentAnalyzer:
         return self.features_df
     
     def _calculate_repetition_score(self, sequence):
-        """计算重复行为得分"""
+        """Calculate repetitive behavior score"""
         if len(sequence) < 2:
             return 0
         
-        # 计算连续重复
+        # Calculate consecutive repeats
         consecutive_repeats = 0
         for i in range(1, len(sequence)):
             if sequence[i] == sequence[i-1]:
                 consecutive_repeats += 1
         
-        # 计算总体重复率
+        # Calculate overall repetition rate
         unique_events = len(set(sequence))
         repetition_rate = 1 - (unique_events / len(sequence)) if len(sequence) > 0 else 0
         
         return (consecutive_repeats + repetition_rate * len(sequence)) / len(sequence)
     
     def perform_clustering(self, method='kmeans', n_clusters=2):
-        """执行聚类分析"""
-        # 选择数值特征
+        """Perform clustering analysis"""
+        # Select numerical features
         feature_cols = [col for col in self.features_df.columns 
                        if col not in ['user_uuid', 'completed_transaction']]
         
         X = self.features_df[feature_cols].values
         
-        # 标准化
+        # Standardize
         scaler = StandardScaler()
         self.scaled_features = scaler.fit_transform(X)
         
         if method == 'kmeans':
-            # 使用肘部法则确定最佳聚类数
+            # Use elbow method to determine optimal cluster number
             inertias = []
             K_range = range(2, min(6, len(self.features_df) + 1))
             for k in K_range:
@@ -187,7 +187,7 @@ class UserIntentAnalyzer:
                 kmeans.fit(self.scaled_features)
                 inertias.append(kmeans.inertia_)
             
-            # 选择最佳k（这里简化为2，因为只有2个用户）
+            # Select best k (simplified to 2 since we only have 2 users)
             best_k = n_clusters
             kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
             self.cluster_labels = kmeans.fit_predict(self.scaled_features)
@@ -199,10 +199,10 @@ class UserIntentAnalyzer:
             self.cluster_labels = dbscan.fit_predict(self.scaled_features)
             self.cluster_model = dbscan
         
-        # 添加聚类标签
+        # Add cluster labels
         self.features_df['cluster'] = self.cluster_labels
         
-        # 生成有意义的聚类名称（仅基于可观察的行为特征）
+        # Generate meaningful cluster names (based on observable behavior features only)
         self.features_df['cluster_label'] = self.features_df.apply(
             lambda row: self._generate_cluster_name(row['cluster']), axis=1
         )
@@ -210,13 +210,13 @@ class UserIntentAnalyzer:
         return self.cluster_labels
     
     def _generate_cluster_name(self, cluster_id):
-        """根据聚类特征生成有意义的名称（仅基于可观察的行为特征）"""
+        """Generate meaningful name based on cluster features (observable behavior features only)"""
         cluster_data = self.features_df[self.features_df['cluster'] == cluster_id]
         
         if len(cluster_data) == 0:
-            return f'聚类 {cluster_id+1}'
+            return f'Cluster {cluster_id+1}'
         
-        # 计算聚类特征（仅使用可观察的行为指标）
+        # Calculate cluster features (using observable behavior indicators only)
         avg_events = cluster_data['total_events'].mean()
         avg_duration = cluster_data['session_duration_minutes'].mean()
         exploration_score = cluster_data['exploration_score'].mean()
@@ -226,51 +226,51 @@ class UserIntentAnalyzer:
         payment_attempts = cluster_data['payment_attempts_count'].mean()
         unique_events = cluster_data['unique_event_types'].mean()
         
-        # 生成名称组件（仅基于可观察特征）
+        # Generate name components (based on observable features only)
         name_parts = []
         
-        # 1. 紧迫程度（基于事件密度）
+        # 1. Urgency level (based on event density)
         if event_density > 4.0:
-            urgency = "高紧迫"
+            urgency = "High Urgency"
         elif event_density > 0.5:
-            urgency = "中紧迫"
+            urgency = "Medium Urgency"
         else:
-            urgency = "低紧迫"
+            urgency = "Low Urgency"
         name_parts.append(urgency)
         
-        # 2. 行为导向（基于实际行为模式）
-        # 如果事件数多且支付尝试多，可能是任务/活动导向
+        # 2. Behavior orientation (based on actual behavior patterns)
+        # If high event count and payment attempts, likely task/activity oriented
         if avg_events > 60 and payment_attempts > 8:
-            orientation = "任务/活动导向"
-        # 如果执行得分明显高于探索得分，是交易导向
+            orientation = "Task/Activity Oriented"
+        # If execution score significantly higher than exploration, transaction oriented
         elif execution_score > exploration_score * 1.3:
-            orientation = "交易导向"
-        # 如果探索得分明显高于执行得分，是探索导向
+            orientation = "Transaction Oriented"
+        # If exploration score significantly higher than execution, exploration oriented
         elif exploration_score > execution_score * 1.3:
-            orientation = "探索导向"
-        # 如果重复行为得分高，是犹豫型
+            orientation = "Exploration Oriented"
+        # If high repetitive behavior score, hesitant type
         elif repetitive_score > 0.7:
-            orientation = "犹豫型"
-        # 如果事件数多，可能是任务/活动导向
+            orientation = "Hesitant Type"
+        # If high event count, likely task/activity oriented
         elif avg_events > 100:
-            orientation = "任务/活动导向"
+            orientation = "Task/Activity Oriented"
         else:
-            orientation = "浏览导向"
+            orientation = "Browsing Oriented"
         name_parts.append(orientation)
         
-        # 组合名称
-        cluster_name = "·".join(name_parts)
+        # Combine name
+        cluster_name = " · ".join(name_parts)
         return cluster_name
     
     def generate_visualizations(self):
-        """生成可视化HTML报告"""
-        # 创建子图
+        """Generate visualization HTML report"""
+        # Create subplots
         fig = make_subplots(
             rows=3, cols=2,
             subplot_titles=(
-                '用户行为特征对比', '聚类结果 (PCA降维)',
-                '行为模式雷达图', '时间序列分析',
-                '事件类型分布', '意图强度分析'
+                'User Behavior Feature Comparison', 'Clustering Results (PCA)',
+                'Behavior Pattern Radar Chart', 'Time Series Analysis',
+                'Event Type Distribution', 'Intent Strength Analysis'
             ),
             specs=[[{"type": "bar"}, {"type": "scatter"}],
                    [{"type": "scatterpolar"}, {"type": "scatter"}],
@@ -279,15 +279,15 @@ class UserIntentAnalyzer:
             horizontal_spacing=0.1
         )
         
-        # 1. 用户行为特征对比
+        # 1. User behavior feature comparison
         comparison_features = ['total_events', 'session_duration_minutes', 
                               'unique_event_types', 'event_density']
-        user_ids_short = [f"用户{i+1}" for i in range(len(self.features_df))]
+        user_ids_short = [f"User {i+1}" for i in range(len(self.features_df))]
         feature_labels = {
-            'total_events': '总事件数',
-            'session_duration_minutes': '会话时长(分钟)',
-            'unique_event_types': '唯一事件类型数',
-            'event_density': '事件密度(事件/分钟)'
+            'total_events': 'Total Events',
+            'session_duration_minutes': 'Session Duration (min)',
+            'unique_event_types': 'Unique Event Types',
+            'event_density': 'Event Density (events/min)'
         }
         
         # 金融行业专业配色
@@ -309,7 +309,7 @@ class UserIntentAnalyzer:
                 row=1, col=1
             )
         
-        # 2. PCA降维可视化
+        # 2. PCA dimensionality reduction visualization
         pca = PCA(n_components=2)
         pca_result = pca.fit_transform(self.scaled_features)
         
@@ -317,7 +317,7 @@ class UserIntentAnalyzer:
         colors = ['#2c5282', '#d4af37']
         for cluster_id in self.features_df['cluster'].unique():
             mask = self.features_df['cluster'] == cluster_id
-            cluster_users = [f"用户{i+1}" for i, m in enumerate(mask) if m]
+            cluster_users = [f"User {i+1}" for i, m in enumerate(mask) if m]
             cluster_name = self.features_df[self.features_df['cluster'] == cluster_id]['cluster_label'].iloc[0]
             fig.add_trace(
                 go.Scatter(
@@ -339,20 +339,20 @@ class UserIntentAnalyzer:
                 row=1, col=2
             )
         
-        # 3. 行为模式雷达图
+        # 3. Behavior pattern radar chart
         radar_features = ['exploration_score', 'execution_score', 'event_diversity',
                          'repetitive_behavior_score', 'payment_attempts_ratio']
         radar_labels = {
-            'exploration_score': '探索得分',
-            'execution_score': '执行得分',
-            'event_diversity': '事件多样性',
-            'repetitive_behavior_score': '重复行为',
-            'payment_attempts_ratio': '支付尝试率'
+            'exploration_score': 'Exploration Score',
+            'execution_score': 'Execution Score',
+            'event_diversity': 'Event Diversity',
+            'repetitive_behavior_score': 'Repetitive Behavior',
+            'payment_attempts_ratio': 'Payment Attempts Ratio'
         }
         
         for idx, user_row in self.features_df.iterrows():
             values = [user_row[f] for f in radar_features]
-            values.append(values[0])  # 闭合雷达图
+            values.append(values[0])  # Close radar chart
             cluster_id = self.features_df.loc[idx, 'cluster']
             
             fig.add_trace(
@@ -360,7 +360,7 @@ class UserIntentAnalyzer:
                     r=values,
                     theta=[radar_labels.get(f, f.replace('_', ' ').title()) for f in radar_features] + [radar_labels.get(radar_features[0], radar_features[0].replace('_', ' ').title())],
                     fill='toself',
-                    name=f"用户{idx+1}",
+                    name=f"User {idx+1}",
                     line_color=colors[cluster_id],
                     fillcolor=colors[cluster_id],
                     opacity=0.4,
@@ -370,19 +370,19 @@ class UserIntentAnalyzer:
                 row=2, col=1
             )
         
-        # 4. 时间序列分析
+        # 4. Time series analysis
         for user_id in self.df['user_uuid'].unique():
             user_data = self.df[self.df['user_uuid'] == user_id].copy()
             user_data = user_data.sort_values('event_time')
             
-            # 计算累积事件数
+            # Calculate cumulative event count
             user_data['cumulative_events'] = range(1, len(user_data) + 1)
             user_data['time_from_start'] = (user_data['event_time'] - user_data['event_time'].min()).dt.total_seconds() / 60
             
             cluster_id = self.features_df[self.features_df['user_uuid'] == user_id]['cluster'].iloc[0]
             user_idx = list(self.df['user_uuid'].unique()).index(user_id)
             
-            # 将颜色转换为rgba
+            # Convert color to rgba
             color_hex = colors[cluster_id]
             r = int(color_hex[1:3], 16)
             g = int(color_hex[3:5], 16)
@@ -393,7 +393,7 @@ class UserIntentAnalyzer:
                     x=user_data['time_from_start'],
                     y=user_data['cumulative_events'],
                     mode='lines+markers',
-                    name=f"用户{user_idx+1}",
+                    name=f"User {user_idx+1}",
                     line=dict(color=colors[cluster_id], width=3),
                     marker=dict(size=7, line=dict(width=1.5, color='#ffffff')),
                     showlegend=True,
@@ -403,7 +403,7 @@ class UserIntentAnalyzer:
                 row=2, col=2
             )
         
-        # 5. 事件类型分布
+        # 5. Event type distribution
         event_type_counts = {}
         for user_id in self.df['user_uuid'].unique():
             user_data = self.df[self.df['user_uuid'] == user_id]
@@ -413,7 +413,7 @@ class UserIntentAnalyzer:
             if key not in event_type_counts:
                 event_type_counts[key] = Counter()
             
-            # 统计主要事件类型
+            # Count main event types
             for event in user_data['event_name']:
                 if 'show_home' in event.lower():
                     event_type_counts[key]['Homepage'] += 1
@@ -429,7 +429,7 @@ class UserIntentAnalyzer:
                     event_type_counts[key]['Other'] += 1
         
         for cluster_key, counts in event_type_counts.items():
-            # 找到对应的cluster_id
+            # Find corresponding cluster_id
             cluster_id = None
             for cid in self.features_df['cluster'].unique():
                 cluster_name = self.features_df[self.features_df['cluster'] == cid]['cluster_label'].iloc[0]
@@ -451,14 +451,14 @@ class UserIntentAnalyzer:
                 row=3, col=1
             )
         
-        # 6. 意图强度分析
+        # 6. Intent strength analysis
         intent_features = ['exploration_score', 'execution_score', 'event_density', 
                           'repetitive_behavior_score']
         intent_labels = {
-            'exploration_score': '探索得分',
-            'execution_score': '执行得分',
-            'event_density': '事件密度',
-            'repetitive_behavior_score': '重复行为得分'
+            'exploration_score': 'Exploration Score',
+            'execution_score': 'Execution Score',
+            'event_density': 'Event Density',
+            'repetitive_behavior_score': 'Repetitive Behavior Score'
         }
         
         x_pos = np.arange(len(user_ids_short))
@@ -481,10 +481,10 @@ class UserIntentAnalyzer:
                 row=3, col=2
             )
         
-        # 更新布局 - 金融行业专业配色
+        # Update layout - Professional financial industry color scheme
         fig.update_layout(
             height=1800,
-            title_text="YUP信用卡用户意图聚类分析报告",
+            title_text="YUP Credit Card User Intent Clustering Analysis Report",
             title_x=0.5,
             title_font_size=22,
             title_font_color='#0a2540',
@@ -492,7 +492,7 @@ class UserIntentAnalyzer:
             template="plotly_white",
             paper_bgcolor='#ffffff',
             plot_bgcolor='#f7f8fa',
-            font=dict(family="Arial, 'Microsoft YaHei', sans-serif", size=11, color='#2d3748'),
+            font=dict(family="Arial, sans-serif", size=11, color='#2d3748'),
             legend=dict(
                 bgcolor='rgba(255,255,255,0.9)',
                 bordercolor='#e2e8f0',
@@ -501,38 +501,38 @@ class UserIntentAnalyzer:
             )
         )
         
-        # 更新x轴和y轴标签
-        fig.update_xaxes(title_text="用户", row=1, col=1)
-        fig.update_yaxes(title_text="数值", row=1, col=1)
+        # Update axis labels
+        fig.update_xaxes(title_text="User", row=1, col=1)
+        fig.update_yaxes(title_text="Value", row=1, col=1)
         fig.update_xaxes(title_text="PC1", row=1, col=2)
         fig.update_yaxes(title_text="PC2", row=1, col=2)
-        fig.update_xaxes(title_text="时间 (分钟)", row=2, col=2)
-        fig.update_yaxes(title_text="累积事件数", row=2, col=2)
-        fig.update_xaxes(title_text="事件类型", row=3, col=1)
-        fig.update_yaxes(title_text="计数", row=3, col=1)
-        fig.update_xaxes(title_text="用户", row=3, col=2)
-        fig.update_yaxes(title_text="得分", row=3, col=2)
+        fig.update_xaxes(title_text="Time (minutes)", row=2, col=2)
+        fig.update_yaxes(title_text="Cumulative Events", row=2, col=2)
+        fig.update_xaxes(title_text="Event Type", row=3, col=1)
+        fig.update_yaxes(title_text="Count", row=3, col=1)
+        fig.update_xaxes(title_text="User", row=3, col=2)
+        fig.update_yaxes(title_text="Score", row=3, col=2)
         
         return fig
     
     def generate_detailed_report(self):
-        """生成详细分析报告"""
-        # 先生成图表并转换为HTML div
+        """Generate detailed analysis report"""
+        # First generate chart and convert to HTML div
         fig = self.generate_visualizations()
-        # 使用to_html获取完整的HTML，然后提取div和script部分
+        # Use to_html to get complete HTML, then extract div and script parts
         plotly_html = fig.to_html(include_plotlyjs='cdn', div_id='main-chart', full_html=False)
         
-        # 生成报告时间
-        report_time = datetime.now().strftime("%Y年%m月%d日 %H:%M")
-        report_time_full = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+        # Generate report time
+        report_time = datetime.now().strftime("%B %d, %Y %H:%M")
+        report_time_full = datetime.now().strftime("%B %d, %Y %H:%M:%S")
         
         html_content = f"""
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YUP信用卡用户意图聚类分析报告</title>
+    <title>YUP Credit Card User Intent Clustering Analysis Report</title>
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <style>
         * {{
@@ -542,7 +542,7 @@ class UserIntentAnalyzer:
         }}
         
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, 'Microsoft YaHei', sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
             background: #f0f2f5;
             padding: 30px 20px;
             line-height: 1.6;
@@ -986,108 +986,108 @@ class UserIntentAnalyzer:
 <body>
     <div class="container">
         <div class="header">
-            <h1>YUP信用卡用户意图聚类分析报告</h1>
-            <p class="subtitle">基于首次交易行为的用户意图识别与行为模式分析</p>
-            <p class="meta">报告生成时间: {report_time} | 分析工具: 机器学习聚类算法</p>
+            <h1>YUP Credit Card User Intent Clustering Analysis Report</h1>
+            <p class="subtitle">User Intent Identification and Behavior Pattern Analysis Based on First Transaction Behavior</p>
+            <p class="meta">Report Generated: {report_time} | Analysis Tool: Machine Learning Clustering Algorithm</p>
         </div>
         
         <div class="content">
-            <!-- 执行摘要 -->
+            <!-- Executive Summary -->
             <div class="section">
                 <div class="executive-summary">
-                    <h3>📋 执行摘要</h3>
+                    <h3>📋 Executive Summary</h3>
                     <p>
-                        本报告基于YUP信用卡用户在获得额度后的首次交易行为数据，采用机器学习聚类算法对用户意图进行深度分析。
-                        通过提取{len(self.features_df)}个用户的{len(self.df)}条行为事件数据，我们识别出{len(self.features_df['cluster'].unique())}种不同的用户意图类型。
-                        分析结果显示，{self.features_df['completed_transaction'].sum()}%的用户有首次交易记录，而{len(self.features_df) - self.features_df['completed_transaction'].sum()}%的用户在多次页面交互后无首次交易记录。
-                        本报告旨在为产品优化、用户体验提升和转化率改善提供数据驱动的决策支持。
+                        This report is based on YUP credit card users' first transaction behavior data after receiving credit limits, using machine learning clustering algorithms for in-depth analysis of user intent.
+                        By extracting {len(self.df)} behavioral event records from {len(self.features_df)} users, we identified {len(self.features_df['cluster'].unique())} distinct user intent types.
+                        Analysis results show that {self.features_df['completed_transaction'].sum()}% of users have first transaction records, while {len(self.features_df) - self.features_df['completed_transaction'].sum()}% of users have no first transaction records after multiple page interactions.
+                        This report aims to provide data-driven decision support for product optimization, user experience improvement, and conversion rate enhancement.
                     </p>
                 </div>
             </div>
             
-            <!-- 数据概览 -->
+            <!-- Data Overview -->
             <div class="section">
-                <h2>📊 数据概览</h2>
+                <h2>📊 Data Overview</h2>
                 <div class="summary-cards">
                     <div class="card">
-                        <h3>总用户数</h3>
+                        <h3>Total Users</h3>
                         <div class="value">{len(self.features_df)}</div>
-                        <div class="label">参与分析的用户</div>
+                        <div class="label">Users Analyzed</div>
                     </div>
                     <div class="card">
-                        <h3>总事件数</h3>
+                        <h3>Total Events</h3>
                         <div class="value">{len(self.df)}</div>
-                        <div class="label">用户行为事件记录</div>
+                        <div class="label">Behavioral Event Records</div>
                     </div>
                     <div class="card">
-                        <h3>完成交易用户</h3>
+                        <h3>Users with Transaction</h3>
                         <div class="value">{self.features_df['completed_transaction'].sum()}</div>
-                        <div class="label">有首次交易记录</div>
+                        <div class="label">Have First Transaction Record</div>
                     </div>
                     <div class="card">
-                        <h3>聚类数量</h3>
+                        <h3>Clusters Identified</h3>
                         <div class="value">{len(self.features_df['cluster'].unique())}</div>
-                        <div class="label">识别出的用户意图类别</div>
+                        <div class="label">User Intent Categories</div>
                     </div>
                 </div>
             </div>
             
-            <!-- 用户画像 -->
+            <!-- User Profiles -->
             <div class="section">
-                <h2>👤 用户行为画像</h2>
+                <h2>👤 User Behavior Profiles</h2>
 """
         
-        # 添加每个用户的详细画像
+        # Add detailed profile for each user
         for idx, row in self.features_df.iterrows():
             user_id = row['user_uuid']
             user_data = self.df[self.df['user_uuid'] == user_id]
             cluster_id = row['cluster']
             cluster_name = row['cluster_label']
-            completed = "✅ 有交易记录" if row['completed_transaction'] else "❌ 无交易记录"
+            completed = "✅ Has Transaction Record" if row['completed_transaction'] else "❌ No Transaction Record"
             
             html_content += f"""
                 <div class="user-profile">
-                    <h3>用户 {idx+1} - {cluster_name} - {completed}</h3>
+                    <h3>User {idx+1} - {cluster_name} - {completed}</h3>
                     <div class="profile-grid">
                         <div class="profile-item">
-                            <div class="label">用户ID</div>
+                            <div class="label">User ID</div>
                             <div class="value">{user_id[:20]}...</div>
                         </div>
                         <div class="profile-item">
-                            <div class="label">总事件数</div>
+                            <div class="label">Total Events</div>
                             <div class="value">{int(row['total_events'])}</div>
                         </div>
                         <div class="profile-item">
-                            <div class="label">会话时长</div>
-                            <div class="value">{row['session_duration_minutes']:.1f} 分钟</div>
+                            <div class="label">Session Duration</div>
+                            <div class="value">{row['session_duration_minutes']:.1f} min</div>
                         </div>
                         <div class="profile-item">
-                            <div class="label">唯一事件类型</div>
+                            <div class="label">Unique Event Types</div>
                             <div class="value">{int(row['unique_event_types'])}</div>
                         </div>
                         <div class="profile-item">
-                            <div class="label">事件密度</div>
-                            <div class="value">{row['event_density']:.2f} 事件/分钟</div>
+                            <div class="label">Event Density</div>
+                            <div class="value">{row['event_density']:.2f} events/min</div>
                         </div>
                         <div class="profile-item">
-                            <div class="label">探索得分</div>
+                            <div class="label">Exploration Score</div>
                             <div class="value">{row['exploration_score']:.3f}</div>
                         </div>
                         <div class="profile-item">
-                            <div class="label">执行得分</div>
+                            <div class="label">Execution Score</div>
                             <div class="value">{row['execution_score']:.3f}</div>
                         </div>
                         <div class="profile-item">
-                            <div class="label">重复行为得分</div>
+                            <div class="label">Repetitive Behavior Score</div>
                             <div class="value">{row['repetitive_behavior_score']:.3f}</div>
                         </div>
                     </div>
                     <div style="margin-top: 20px;">
-                        <h4 style="color: #667eea; margin-bottom: 10px;">主要行为路径：</h4>
+                        <h4 style="color: #667eea; margin-bottom: 10px;">Main Behavior Path:</h4>
                         <div style="background: white; padding: 15px; border-radius: 10px; font-size: 0.9em;">
 """
             
-            # 添加行为路径
+            # Add behavior path
             user_data_sorted = user_data.sort_values('event_time')
             top_events = user_data_sorted['event_name'].head(10).tolist()
             path_str = " → ".join([e.replace('show_', '').replace('click_', '').replace('_', ' ')[:20] for e in top_events])
@@ -1102,15 +1102,15 @@ class UserIntentAnalyzer:
         html_content += """
             </div>
             
-            <!-- 聚类分析 -->
+            <!-- Clustering Analysis -->
             <div class="section">
-                <h2>🔍 聚类分析结果</h2>
+                <h2>🔍 Clustering Analysis Results</h2>
                 <div class="cluster-analysis">
-                    <h3>聚类特征对比</h3>
+                    <h3>Cluster Feature Comparison</h3>
                     <table>
                         <thead>
                             <tr>
-                                <th>特征</th>
+                                <th>Feature</th>
 """
         
         for cluster_id in sorted(self.features_df['cluster'].unique()):
@@ -1142,44 +1142,44 @@ class UserIntentAnalyzer:
                 </div>
             </div>
             
-            <!-- 可视化图表 -->
+            <!-- Visualization Charts -->
             <div class="section">
-                <h2>📈 数据可视化分析</h2>
+                <h2>📈 Data Visualization Analysis</h2>
                 <p style="color: #666; margin-bottom: 20px; font-size: 1.1em;">
-                    以下图表展示了用户行为的多维度分析，包括行为特征对比、聚类结果、行为模式雷达图、时间序列分析、事件类型分布和意图强度分析。
+                    The following charts present multi-dimensional analysis of user behavior, including behavior feature comparison, clustering results, behavior pattern radar charts, time series analysis, event type distribution, and intent strength analysis.
                 </p>
                 <div class="chart-container">
                     PLOTLY_CHART_PLACEHOLDER
                 </div>
             </div>
             
-            <!-- 关键洞察 -->
+            <!-- Key Insights -->
             <div class="section">
-                <h2>💡 关键洞察与发现</h2>
+                <h2>💡 Key Insights & Findings</h2>
                 <div class="insights">
-                    <h3>用户意图识别结果</h3>
+                    <h3>User Intent Identification Results</h3>
                     <ul>
 """
         
-        # 生成洞察
+        # Generate insights
         for cluster_id in sorted(self.features_df['cluster'].unique()):
             cluster_data = self.features_df[self.features_df['cluster'] == cluster_id]
             cluster_name = cluster_data['cluster_label'].iloc[0]
             completed_rate = cluster_data['completed_transaction'].mean() * 100
             
             if completed_rate > 50:
-                intent = "高转化意图"
-                description = "用户表现出较强的交易意图，有首次交易记录"
+                intent = "High Conversion Intent"
+                description = "Users show strong transaction intent with first transaction records"
             else:
-                intent = "探索型意图"
-                description = "用户处于探索阶段，浏览多个功能但无首次交易记录"
+                intent = "Exploration Intent"
+                description = "Users are in exploration phase, browsing multiple features but have no first transaction records"
             
             html_content += f"""
                         <li>
                             <strong>{cluster_name}: {intent}</strong><br>
                             {description}<br>
-                            <small>转化率: {completed_rate:.1f}% | 平均事件数: {cluster_data['total_events'].mean():.1f} | 
-                            平均会话时长: {cluster_data['session_duration_minutes'].mean():.1f}分钟</small>
+                            <small>Conversion Rate: {completed_rate:.1f}% | Avg Events: {cluster_data['total_events'].mean():.1f} | 
+                            Avg Session Duration: {cluster_data['session_duration_minutes'].mean():.1f} min</small>
                         </li>
 """
         
@@ -1188,142 +1188,151 @@ class UserIntentAnalyzer:
                 </div>
             </div>
             
-            <!-- 商业价值分析 -->
+            <!-- Business Value Analysis -->
             <div class="section">
-                <h2>💰 商业价值分析</h2>
+                <h2>💰 Business Value Analysis</h2>
                 <div class="business-value">
-                    <h3>转化率优化机会</h3>
+                    <h3>Conversion Rate Optimization Opportunities</h3>
                     <ul>
                         <li>
-                            <strong>高转化用户特征识别：</strong> 有首次交易记录的用户表现出明确的交易意图，执行得分较高。
-                            建议针对此类用户优化交易流程，减少操作步骤，提升转化效率。
+                            <strong>High Conversion User Identification:</strong> Users with first transaction records show clear transaction intent with higher execution scores.
+                            Recommend optimizing transaction flow for such users, reducing steps, and improving conversion efficiency.
                         </li>
                         <li>
-                            <strong>探索型用户转化策略：</strong> 无首次交易记录的用户虽然事件数较多，但转化率较低。
-                            此类用户需要更清晰的功能引导和交易激励，建议设计新手引导流程和优惠券策略。
+                            <strong>Exploration User Conversion Strategy:</strong> Users without first transaction records have more events but lower conversion rates.
+                            These users need clearer feature guidance and transaction incentives. Recommend designing onboarding flows and coupon strategies.
                         </li>
                         <li>
-                            <strong>潜在ROI提升：</strong> 通过优化探索型用户的转化路径，预计可将整体转化率提升30-50%，
-                            从而显著提升首次交易完成率和用户生命周期价值。
+                            <strong>Potential ROI Improvement:</strong> By optimizing conversion paths for exploration users, overall conversion rate is expected to increase by 30-50%,
+                            significantly improving first transaction completion rate and user lifetime value.
                         </li>
                     </ul>
                 </div>
             </div>
             
-            <!-- 行动建议 -->
+            <!-- Action Recommendations -->
             <div class="section">
-                <h2>🎯 行动建议与下一步计划</h2>
+                <h2>🎯 Action Recommendations & Next Steps</h2>
                 <div class="action-plan">
-                    <h3>产品优化建议</h3>
+                    <h3>Product Optimization Recommendations</h3>
                     <ul>
                         <li>
-                            <strong>短期行动（1-2周）：</strong>
+                            <strong>Short-term Actions (1-2 weeks):</strong>
                             <ul style="margin-top: 10px; padding-left: 20px;">
-                                <li>为探索型用户设计简化版交易流程，减少操作步骤</li>
-                                <li>在关键页面添加交易引导提示和帮助信息</li>
-                                <li>优化优惠券展示和使用的交互流程</li>
+                                <li>Design simplified transaction flow for exploration users, reducing steps</li>
+                                <li>Add transaction guidance prompts and help information on key pages</li>
+                                <li>Optimize coupon display and usage interaction flow</li>
                             </ul>
                         </li>
                         <li>
-                            <strong>中期行动（1-2月）：</strong>
+                            <strong>Medium-term Actions (1-2 months):</strong>
                             <ul style="margin-top: 10px; padding-left: 20px;">
-                                <li>基于聚类结果开发个性化推荐系统</li>
-                                <li>实施A/B测试验证优化效果</li>
-                                <li>建立用户意图实时识别系统，动态调整用户体验</li>
+                                <li>Develop personalized recommendation system based on clustering results</li>
+                                <li>Implement A/B testing to validate optimization effects</li>
+                                <li>Establish real-time user intent recognition system for dynamic UX adjustment</li>
                             </ul>
                         </li>
                         <li>
-                            <strong>长期规划（3-6月）：</strong>
+                            <strong>Long-term Planning (3-6 months):</strong>
                             <ul style="margin-top: 10px; padding-left: 20px;">
-                                <li>扩展聚类模型，覆盖更多用户行为场景</li>
-                                <li>建立用户意图预测模型，提前识别转化机会</li>
-                                <li>整合多渠道数据，构建360度用户画像</li>
+                                <li>Expand clustering model to cover more user behavior scenarios</li>
+                                <li>Build user intent prediction model to identify conversion opportunities early</li>
+                                <li>Integrate multi-channel data to build 360-degree user profiles</li>
                             </ul>
                         </li>
                     </ul>
                 </div>
             </div>
             
-            <!-- 方法论 -->
+            <!-- Methodology -->
             <div class="section">
-                <h2>🔬 分析方法论</h2>
+                <h2>🔬 Analysis Methodology</h2>
                 <div class="methodology">
-                    <h4>数据特征工程</h4>
+                    <h4>Data Feature Engineering</h4>
                     <ul>
-                        <li>提取了20+维用户行为特征，包括事件频率、时间分布、行为多样性等</li>
-                        <li>计算了探索得分、执行得分、重复行为得分等意图强度指标</li>
-                        <li>对特征进行了标准化处理，确保不同量纲特征的可比性</li>
+                        <li>Extracted 20+ dimensional user behavior features, including event frequency, time distribution, behavior diversity, etc.</li>
+                        <li>Calculated intent strength indicators such as exploration score, execution score, repetitive behavior score</li>
+                        <li>Standardized features to ensure comparability across different scales</li>
                     </ul>
-                    <h4 style="margin-top: 20px;">聚类算法</h4>
+                    <h4 style="margin-top: 20px;">Clustering Algorithm</h4>
                     <ul>
-                        <li>采用K-means聚类算法，通过肘部法则确定最优聚类数</li>
-                        <li>使用PCA主成分分析进行降维可视化</li>
-                        <li>通过轮廓系数评估聚类质量</li>
+                        <li>Used K-means clustering algorithm, determined optimal cluster number through elbow method</li>
+                        <li>Applied PCA principal component analysis for dimensionality reduction visualization</li>
+                        <li>Evaluated clustering quality through silhouette coefficient</li>
                     </ul>
-                    <h4 style="margin-top: 20px;">可视化技术</h4>
+                    <h4 style="margin-top: 20px;">Visualization Technology</h4>
                     <ul>
-                        <li>使用Plotly交互式图表库生成多维度可视化</li>
-                        <li>包含雷达图、时间序列、散点图等多种图表类型</li>
-                        <li>所有图表支持交互式探索和导出功能</li>
+                        <li>Used Plotly interactive chart library for multi-dimensional visualization</li>
+                        <li>Includes radar charts, time series, scatter plots, and other chart types</li>
+                        <li>All charts support interactive exploration and export functions</li>
                     </ul>
                 </div>
             </div>
         </div>
         
         <div class="footer">
-            <p><strong>YUP信用卡用户行为分析系统</strong> | 专业数据分析服务 | 生成时间: {report_time_full}</p>
-            <p style="margin-top: 10px; font-size: 0.85em;">本报告采用机器学习算法生成，数据来源可靠，分析结果仅供参考</p>
+            <p><strong>YUP Credit Card User Behavior Analysis System</strong> | Professional Data Analysis Service | Generated: {report_time_full}</p>
+            <p style="margin-top: 10px; font-size: 0.85em;">This report is generated using machine learning algorithms. Data sources are reliable, analysis results are for reference only.</p>
         </div>
     </div>
     
+    <script>
+        // Fix for Vercel/Plotly language switch function requirement
+        if (typeof switchLanguage === 'undefined') {{
+            window.switchLanguage = function(lang) {{
+                // Empty function to prevent console errors
+                // No language switching functionality needed
+            }};
+        }}
+    </script>
 </body>
 </html>
 """
         
-        # 替换占位符
+        # Replace placeholder
         html_content = html_content.replace('PLOTLY_CHART_PLACEHOLDER', plotly_html)
         
         return html_content
 
 def main():
-    """主函数"""
-    print("🚀 开始分析YUP信用卡用户行为数据...")
+    """Main function"""
+    print("🚀 Starting YUP credit card user behavior data analysis...")
     
-    # 初始化分析器
+    # Initialize analyzer
     analyzer = UserIntentAnalyzer('data.xlsx')
     
-    # 提取特征
-    print("📊 提取用户行为特征...")
+    # Extract features
+    print("📊 Extracting user behavior features...")
     features_df = analyzer.extract_features()
-    print(f"✅ 成功提取 {len(features_df)} 个用户的特征")
-    print("\n特征概览:")
+    print(f"✅ Successfully extracted features from {len(features_df)} users")
+    print("\nFeature Overview:")
     print(features_df[['user_uuid', 'total_events', 'completed_transaction', 
                       'session_duration_minutes', 'exploration_score', 'execution_score']])
     
-    # 执行聚类
-    print("\n🔍 执行聚类分析...")
+    # Perform clustering
+    print("\n🔍 Performing clustering analysis...")
     cluster_labels = analyzer.perform_clustering(method='kmeans', n_clusters=2)
-    print(f"✅ 聚类完成，识别出 {len(set(cluster_labels))} 个用户意图类别")
+    print(f"✅ Clustering completed, identified {len(set(cluster_labels))} user intent categories")
     
-    # 生成可视化
-    print("\n📈 生成可视化报告...")
+    # Generate visualizations
+    print("\n📈 Generating visualization report...")
     fig = analyzer.generate_visualizations()
     
-    # 生成HTML报告
-    print("\n📄 生成HTML报告...")
+    # Generate HTML report
+    print("\n📄 Generating HTML report...")
     html_content = analyzer.generate_detailed_report()
     
-    # 保存HTML文件
+    # Save HTML file
     output_path = 'user_intent_clustering_report.html'
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
-    # 保存Plotly图表
+    # Save Plotly charts
     fig.write_html('visualizations.html')
     
-    print(f"\n✅ 分析完成！")
-    print(f"📁 详细报告已保存至: {output_path}")
-    print(f"📁 可视化图表已保存至: visualizations.html")
+    print(f"\n✅ Analysis completed!")
+    print(f"📁 Detailed report saved to: {output_path}")
+    print(f"📁 Visualization charts saved to: visualizations.html")
     
     return analyzer
 
