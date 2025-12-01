@@ -93,7 +93,7 @@ class UserIntentAnalyzer:
             # Specific event type counts
             key_events = {
                 'homepage_views': ['show_home_page', 'show_homepage'],
-                'voucher_interactions': ['voucher', '券'],
+                'voucher_interactions': ['voucher'],
                 'qr_interactions': ['qris', 'qr', 'QR'],
                 'payment_attempts': ['checkout', 'pay', 'payment', 'recharge'],
                 'profile_views': ['profil', 'profile'],
@@ -126,7 +126,7 @@ class UserIntentAnalyzer:
                 features['has_remarks'] = 1
                 features['remarks_count'] = len(remarks)
                 # Key remarks
-                features['voucher_click_remarks'] = remarks.str.contains('券', na=False).sum()
+                features['voucher_click_remarks'] = remarks.str.contains('voucher', case=False, na=False).sum()
                 features['qr_remarks'] = remarks.str.contains('QR', na=False).sum()
             else:
                 features['has_remarks'] = 0
